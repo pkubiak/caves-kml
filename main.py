@@ -1,9 +1,118 @@
-import json, csv, os, re, time, random, logging
+import json, csv, os, re, time, random, logging, tempfile, zipfile, shutil
 from urllib.request import Request
 import urllib.parse
 import lxml.html
 from collections import OrderedDict
 from tqdm import tqdm
+
+from data import DATA, PRELOAD_IMAGES
+from structures import Link
+from pgi_downloader import PGIDownloader
+import requests
+
+
+
+class PGIRecord:
+    """Encapsulate Cave Information from PGI portal"""
+
+    DATA_PATH = "data/{id}.html"
+
+    @property
+    def icon(self):
+        length = self.description.get('DLUGOSC', 0)
+
+        if length < 10:
+            return "#z-ico08.png"
+        elif length < 100:
+            return "#z-ico13.png"
+        elif length < 1000:
+            return "#z-ico18.png"
+        return "#z-ico03.png"
+
+    def __init__(self, id, description, *, attachments=None, links=None, coords=None):
+        self.id = id
+        self.description = description
+        self.coords = coords or self.parse_wsg84(description.get('Współrzędne WGS84'))
+        self.attachments = []
+        self._preload_attachments(attachments or [])
+
+        self.links = links or []
+
+    @staticmethod
+    def parse_wsg84(text):
+        try:
+            lon, lat = re.findall('(\d+)°(\d+)′(\d+(?:\.\d+)?)″', text.replace(',', '.'))
+            assert (len(lat) == 3) and (len(lon) == 3)
+
+            lat = float(lat[0]) + (float(lat[1]) + float(lat[2])/60)/60
+            lon = float(lon[0]) + (float(lon[1]) + float(lon[2])/60)/60
+
+            return (lat, lon)
+        except ValueError:
+            return None
+
+    def _preload_attachments(self, ids):
+        for attachment_id in ids:
+            logging.info('Preloading %s', attachment_id)
+            path = f"./data/{attachment_id}.jpg"
+            self.attachments.append(PGIDownloader.download(attachment_id, path))
+
+    @classmethod
+    def _preload_html(cls, id):
+        path = cls.DATA_PATH.format(id=id)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        with open(path, 'w') as output:
+            r = requests.get(f"http://jaskiniepolski.pgi.gov.pl/Details/Information/{id}")
+            output.write(r.text)
+
+    @classmethod
+    def load(cls, id):
+        """Parse content of PGI info page, e.g. http://jaskiniepolski.pgi.gov.pl/Details/Information/406"""
+        data_path = cls.DATA_PATH.format(id=id)
+
+        if not os.path.exists(data_path):
+            cls._preload_html(id)
+            time.sleep(2)
+
+        with open(data_path) as file:
+            doc = lxml.html.parse(file)
+            data = OrderedDict()
+            for e in doc.xpath('//tr'):
+                assert len(e.getchildren()) == 2
+                key, value = e.getchildren()
+                key = key.text_content()
+                value = value.text_content()
+                data[clear_text(key)] = clear_text(value)
+
+            # Read attachments
+            file.seek(0)
+            text = file.read()
+
+            if id in PRELOAD_IMAGES:
+                attachments = list(map(int, re.findall('showImageInfo\((\d+)\)', text)))
+            else:
+                attachments = None
+
+            # Get Links
+            links = [Link('Pokaż oryginał', f"http://jaskiniepolski.pgi.gov.pl/Details/Information/{id}")]
+            if 'geostanowiska.pgi.gov.pl' in text:
+                geostanowisko = re.search(r'https?://geostanowiska.pgi.gov.pl/[^"\']+', text)
+                assert geostanowisko
+                # print(geostanowisko, geostanowisko.group())
+                links.append(Link('Geostanowisko', geostanowisko.group()))
+
+            for content in DATA.get(id, []):
+                if isinstance(content, Link):
+                    links.append(content)
+
+
+        return PGIRecord(
+            id=id,
+            description=data,
+            attachments=attachments,
+            links=links
+        )
 
 
 def query(x0, y0, x1, y1):
@@ -27,7 +136,7 @@ def query(x0, y0, x1, y1):
     }
 
     query_string = urllib.parse.urlencode(params)
-    url = f"https://cbdgmapa.pgi.gov.pl/arcgis/rest/services/jaskinie/MapServer//0/query?{query_string}"
+    url = f"http://cbdgmapa.pgi.gov.pl/arcgis/rest/services/jaskinie/MapServer//0/query?{query_string}"
 
     with urllib.request.urlopen(url) as response:
         data = response.read()
@@ -67,37 +176,9 @@ def export_to_tsv(path, data):
 def clear_text(text):
     return re.sub('\s+', ' ', text).strip()
 
-def get_full_description(id):
-    """Parse: http://jaskiniepolski.pgi.gov.pl/Details/Information/406"""
-    os.makedirs("data", exist_ok=True)
-    if not os.path.exists(f"data/{id}.html"):
-        os.system(f"curl -o data/{id}.html http://jaskiniepolski.pgi.gov.pl/Details/Information/{id}")
-        time.sleep(2)
 
-    with open(f"data/{id}.html") as file:
-        doc = lxml.html.parse(file)
-        data = OrderedDict()
-        for e in doc.xpath('//tr'):
-            assert len(e.getchildren()) == 2
-            key, value = e.getchildren()
-            key = key.text_content()
-            value = value.text_content()
-            data[clear_text(key)] = clear_text(value)
-        return data
-
-def parse_wsg84(text):
-    try:
-        lon, lat = re.findall('(\d+)°(\d+)′(\d+(?:\.\d+)?)″', text.replace(',', '.'))
-        assert (len(lat) == 3) and (len(lon) == 3)
-
-        lat = float(lat[0]) + (float(lat[1]) + float(lat[2])/60)/60
-        lon = float(lon[0]) + (float(lon[1]) + float(lon[2])/60)/60
-
-        return (lat, lon)
-    except ValueError:
-        return None
-
-def _show_placemark(id, data, coord, icon):
+def render_placemark(record, external_data=True):
+    data = record.description
     description = []
     for key, value in data.items():
         if value.strip() == '':
@@ -106,17 +187,26 @@ def _show_placemark(id, data, coord, icon):
         description.append(f"<b>{key.upper()}</b><p>{value}</p>")
     description = "\n".join(description)
 
+    links_html = ''.join(map(lambda link: f"<li>{link.to_html()}</li>", record.links))
+
+    # Generate
+    if record.attachments and external_data:
+        attachments = "".join(map(lambda attachment: f"<lc:attachment>files/{attachment.id}.jpg</lc:attachment>", record.attachments))
+        extended_data = f'<ExtendedData xmlns:lc="http://www.locusmap.eu">{attachments}</ExtendedData>'
+    else:
+        extended_data = ''
+
     html = f"""
         <Placemark>
           <name>{data['Nazwa']}</name>
           <description><![CDATA[
             <style type="text/css">p{{margin-top:0;text-align:justify}}</style>
-            <small>{description}</small><br/>
-            <a href="http://jaskiniepolski.pgi.gov.pl/Details/Information/{id}">Pokaż oryginał</a>]]>
-          </description>
-          <styleUrl>{icon}</styleUrl>
+            <small>{description}<b>LINKI</b><ul>{links_html}</ul></small><br/>
+          ]]></description>
+          <styleUrl>{record.icon}</styleUrl>
+          {extended_data}
           <Point>
-            <coordinates>{coord[1]},{coord[0]}</coordinates>
+            <coordinates>{record.coords[1]},{record.coords[0]}</coordinates>
           </Point>
         </Placemark>
     """
@@ -124,44 +214,47 @@ def _show_placemark(id, data, coord, icon):
     return ''.join([line.strip() for line in html.split("\n")])
 
 
-def get_icon(value):
-    if value is None or value < 10:
-        i = 8
-    elif value < 100:
-        i = 13
-    elif value < 1000:
-        i = 18
-    else:
-        i = 3
-
-    return f"#z-ico{str(i).zfill(2)}.png"
-
 
 def export_to_kml(path, data):
+    attachments = []
     with open(path, 'w') as output:
         output.write("""<?xml version="1.0" encoding="utf-8"?>
             <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
             <Document>
-        	<name>Ulubione</name>
+        	<name>Jaskinie Polskie</name>
         	<atom:author><atom:name>Locus (Android)</atom:name></atom:author>
         """)
 
-        iter = tqdm(data.items())
-        for key, values in iter:
-            iter.set_description(str(key))
-            data = get_full_description(key)
-            coord = parse_wsg84(data['Współrzędne WGS84'])
-            if coord is None:
+        for key, values in tqdm(data.items()):
+            record = PGIRecord.load(key)
+
+            if record.coords is None:
                 logging.info('Skipping %s', key)
                 continue
-            icon = get_icon(values['DLUGOSC'])
-            # print(data, coord)
-            output.write(_show_placemark(key, data, coord, icon))
+
+            output.write(render_placemark(record))
+            attachments.extend(record.attachments)
 
         output.write("""
             </Document>
             </kml>
         """)
+
+    return attachments
+
+
+def export_to_kmz(path, data):
+    # with zipfile.ZipFile(path, 'x') as output:
+    #     for
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        attachments = export_to_kml(os.path.join(tmp_dir, 'doc.kml'), data)
+        os.makedirs(os.path.join(tmp_dir, 'files'))
+
+        for attachment in attachments:
+            os.symlink(attachment.path, os.path.join(tmp_dir, 'files', f"{attachment.id}.jpg"))
+        # print(tmp_dir)
+        # input()
+        shutil.make_archive(path, 'zip', tmp_dir)
 
 def generate_data_placeholders(data):
     print("DATA = {")
@@ -171,10 +264,24 @@ def generate_data_placeholders(data):
         print()
     print("}")
 
-res = get(14.0, 49.0, 24.2, 55)
-assert len(res) >= 4394
 
-generate_data_placeholders(res)
+if __name__ == '__main__':
+#     record = PGIRecord.load(11098)
+#     # PGIRecord._preload(2030)
+#     # record = get_full_description(2030)
+#     print(record.description)
+#     # print(record.attachments)
+#     record._preload_attachments()
+# #
+#     exit(0)
+    res = get(14.0, 49.0, 24.2, 55)
 
-#export_to_tsv('output.tsv', res)
-#export_to_kml('output.kml', res)
+    for key in res:
+        assert key in DATA
+        for link in DATA[key]:
+            link.validate()
+
+    # generate_data_placeholders(res)
+    export_to_kmz('./caves.kmz', res)
+    # export_to_tsv('output.new.tsv', res)
+    # export_to_kml('output.new.kml', res)
