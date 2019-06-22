@@ -1,6 +1,6 @@
 from structures import SzkicTechnicznyKKTJ, Epimenidas, Link, Geocache, Wikipedia
 
-PRELOAD_IMAGES = [11098, 1989, 1990, 2064, 2050, 1227, 1445, 2077, 1197, 2170]
+PRELOAD_IMAGES = [11098, 1989, 1990, 2064, 2050, 1227, 1445, 2077, 1197, 2170, 1473, 1535, 1472, 1187, 490, 1245, 1537, 491]
 
 DATA = {
 	# Grota w Mechowej / NP-01
@@ -125,12 +125,16 @@ DATA = {
 
 	# Jaskinia Wielka Śnieżna / T-Wielka Śnieżna
 	490: [
-        SzkicTechnicznyKKTJ('t-wielka_sniezna')
+        SzkicTechnicznyKKTJ('t-wielka_sniezna'),
+        Epimenidas('tatry/sniezn_p'),
+        Wikipedia('Jaskinia_Wielka_Śnieżna'),
     ],
 
 	# Jaskinia Wielka Litworowa / T.E-12.01
 	491: [
-        SzkicTechnicznyKKTJ('t-wielka_litworowa')
+        SzkicTechnicznyKKTJ('t-wielka_litworowa'),
+        Epimenidas('tatry/sniezn_p'),
+        Wikipedia('Jaskinia_Wielka_Śnieżna'),
     ],
 
 	# Jaskinia nad Kotlinami / T.E-12.06
@@ -1496,7 +1500,9 @@ DATA = {
 
 	# Jaskinia Miętusia Wyżnia / T.D-10.01
 	1187: [
-        SzkicTechnicznyKKTJ('t-mietusia_wyz')
+        SzkicTechnicznyKKTJ('t-mietusia_wyz'),
+        Epimenidas('tatry/miewyz_p'),
+        Wikipedia('Jaskinia_Miętusia_Wyżnia'),
     ],
 
 	# Schron w Piecu / T.D-10.02
@@ -1678,7 +1684,9 @@ DATA = {
 
 	# Jaskinia Kasprowa Wyżnia / T.D-17.01
 	1245: [
-        SzkicTechnicznyKKTJ('t-kasprowa_sr_wyz')
+        SzkicTechnicznyKKTJ('t-kasprowa_sr_wyz'),
+        Epimenidas('tatry/kaswyz'),
+        Wikipedia('Jaskinia_Kasprowa_Wyżnia'),
     ],
 
 	# Nyża z Kozicami / T.D-12.16
@@ -1686,7 +1694,9 @@ DATA = {
 
 	# Jaskinia Kasprowa Średnia / T.D-17.02
 	1247: [
-        SzkicTechnicznyKKTJ('t-kasprowa_sr_wyz')
+        SzkicTechnicznyKKTJ('t-kasprowa_sr_wyz'),
+        Epimenidas('tatry/kassr'),
+        Wikipedia('Jaskinia_Kasprowa_Średnia'),
     ],
 
 	# Schron Partyzantów II / T.D-12.17
@@ -2228,7 +2238,9 @@ DATA = {
 
 	# Jaskinia Czarna / T.E-09.12
 	1445: [
-        SzkicTechnicznyKKTJ('t-czarna')
+        SzkicTechnicznyKKTJ('t-czarna'),
+        Epimenidas('tatry/czarna_p'),
+        Wikipedia('Jaskinia_Czarna'),
     ],
 
 	# Świstowa  Szczelina / T.E-10.01
@@ -2311,12 +2323,16 @@ DATA = {
 
 	# Jaskinia Marmurowa / T.E-11.05
 	1472: [
-        SzkicTechnicznyKKTJ('t-marmurowa')
+        SzkicTechnicznyKKTJ('t-marmurowa'),
+        Epimenidas('tatry/marmur_p'),
+        Wikipedia('Jaskinia_Marmurowa'),
     ],
 
 	# Ptasia Studnia / T.E-11.06
 	1473: [
-        SzkicTechnicznyKKTJ('t-ptasia_stud-lod_litw')
+        SzkicTechnicznyKKTJ('t-ptasia_stud-lod_litw'),
+        Epimenidas('tatry/ptasiastudnia_p'),
+        Wikipedia('Ptasia_Studnia'),
     ],
 
 	# Jaskinia nad Dachem / T.E-11.09
@@ -2518,7 +2534,9 @@ DATA = {
 
 	# Jaskinia pod Wantą / T.E-12.03
 	1535: [
-        SzkicTechnicznyKKTJ('t-pod_wanta')
+        SzkicTechnicznyKKTJ('t-pod_wanta'),
+        Epimenidas('tatry/podwanta_p'),
+        Wikipedia('Jaskinia_pod_Wantą'),
     ],
 
 	# Dziura Małołącka Mała / T.E-12.04
@@ -2526,7 +2544,9 @@ DATA = {
 
 	# Jaskinia Małołącka / T.E-12.07
 	1537: [
-        SzkicTechnicznyKKTJ('t-malolacka')
+        SzkicTechnicznyKKTJ('t-malolacka'),
+        Epimenidas('tatry/mlacka_p'),
+        Wikipedia('Jaskinia_Małołącka'),
     ],
 
 	# Jaskinia Śnieżna Studnia / T.E-12.08
@@ -2797,7 +2817,10 @@ DATA = {
 	1626: [],
 
 	# Jaskinia Lodowa Małołącka / T.E-13.02
-	1627: [],
+	1627: [
+        Epimenidas('tatry/lodmal_p'),
+        Wikipedia('Jaskinia_Lodowa_Małołącka'),
+    ],
 
 	# Jaskinia Kondracka / T.E-13.27
 	1628: [],

@@ -1,4 +1,5 @@
-import json, csv, os, re, time, random, logging, tempfile, zipfile, shutil
+#! /usr/bin/env python3
+import json, csv, os, re, time, random, logging, tempfile, zipfile, shutil, datetime
 from urllib.request import Request
 import urllib.parse
 import lxml.html
@@ -9,7 +10,7 @@ from data import DATA, PRELOAD_IMAGES
 from structures import Link
 from pgi_downloader import PGIDownloader
 import requests
-
+import logging
 
 
 class PGIRecord:
@@ -53,7 +54,7 @@ class PGIRecord:
 
     def _preload_attachments(self, ids):
         for attachment_id in ids:
-            logging.info('Preloading %s', attachment_id)
+            logging.debug('Preloading %s', attachment_id)
             path = f"./data/{attachment_id}.jpg"
             self.attachments.append(PGIDownloader.download(attachment_id, path))
 
@@ -91,6 +92,7 @@ class PGIRecord:
 
             if id in PRELOAD_IMAGES:
                 attachments = list(map(int, re.findall('showImageInfo\((\d+)\)', text)))
+                logging.info('Preloading %d images for %s', len(attachments), data['Nazwa'])
             else:
                 attachments = None
 
@@ -229,7 +231,7 @@ def export_to_kml(path, data):
             record = PGIRecord.load(key)
 
             if record.coords is None:
-                logging.info('Skipping %s', key)
+                logging.warning('Skipping %s', key)
                 continue
 
             output.write(render_placemark(record))
@@ -244,17 +246,16 @@ def export_to_kml(path, data):
 
 
 def export_to_kmz(path, data):
-    # with zipfile.ZipFile(path, 'x') as output:
-    #     for
     with tempfile.TemporaryDirectory() as tmp_dir:
+        print()
         attachments = export_to_kml(os.path.join(tmp_dir, 'doc.kml'), data)
         os.makedirs(os.path.join(tmp_dir, 'files'))
 
         for attachment in attachments:
             os.symlink(attachment.path, os.path.join(tmp_dir, 'files', f"{attachment.id}.jpg"))
-        # print(tmp_dir)
-        # input()
+
         shutil.make_archive(path, 'zip', tmp_dir)
+        os.rename(path+'.zip', path)
 
 def generate_data_placeholders(data):
     print("DATA = {")
@@ -266,22 +267,21 @@ def generate_data_placeholders(data):
 
 
 if __name__ == '__main__':
-#     record = PGIRecord.load(11098)
-#     # PGIRecord._preload(2030)
-#     # record = get_full_description(2030)
-#     print(record.description)
-#     # print(record.attachments)
-#     record._preload_attachments()
-# #
-#     exit(0)
+    logging.basicConfig(format='[%(asctime)-15s] [%(levelname)s] %(message)s')
+    logging.getLogger().setLevel('INFO')
+
     res = get(14.0, 49.0, 24.2, 55)
 
-    for key in res:
+    for key in tqdm(res):
         assert key in DATA
         for link in DATA[key]:
             link.validate()
 
     # generate_data_placeholders(res)
-    export_to_kmz('./caves.kmz', res)
+    output_file = "caves.%s.kmz" % datetime.datetime.today().strftime('%Y%m%d')
+
+    logging.info('Output file: %s', output_file)
+    export_to_kmz(output_file, res)
+
     # export_to_tsv('output.new.tsv', res)
     # export_to_kml('output.new.kml', res)
