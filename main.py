@@ -19,8 +19,18 @@ class PGIRecord:
     DATA_PATH = "data/{id}.html"
 
     @property
+    def name(self) -> str:
+        return self.description['Nazwa']
+
+    @property
+    def length(self) -> int:
+        length = self.description.get('Długość [m] w tym szacowane [m]', '').replace(',', '.').strip().partition(' ')[0] or '0.0'
+        logging.info('len: %d', int(float(length)))
+        return int(float(length))
+
+    @property
     def icon(self):
-        length = self.description.get('DLUGOSC', 0)
+        length = self.length
 
         if length < 10:
             return "#z-ico08.png"
@@ -56,6 +66,7 @@ class PGIRecord:
         for attachment_id in ids:
             logging.debug('Preloading %s', attachment_id)
             path = f"./data/{attachment_id}.jpg"
+
             self.attachments.append(PGIDownloader.download(attachment_id, path))
 
     @classmethod
@@ -200,7 +211,7 @@ def render_placemark(record, external_data=True):
 
     html = f"""
         <Placemark>
-          <name>{data['Nazwa']}</name>
+          <name>{record.name} [{record.length}m]</name>
           <description><![CDATA[
             <style type="text/css">p{{margin-top:0;text-align:justify}}</style>
             <small>{description}<b>LINKI</b><ul>{links_html}</ul></small><br/>
@@ -213,7 +224,7 @@ def render_placemark(record, external_data=True):
         </Placemark>
     """
 
-    return ''.join([line.strip() for line in html.split("\n")])
+    return ''.join([line.strip() for line in html.split("\n")]) + "\n"
 
 
 
@@ -271,7 +282,6 @@ if __name__ == '__main__':
     logging.getLogger().setLevel('INFO')
 
     res = get(14.0, 49.0, 24.2, 55)
-
     for key in tqdm(res):
         assert key in DATA
         for link in DATA[key]:
