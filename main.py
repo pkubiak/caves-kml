@@ -1,5 +1,5 @@
 #! /usr/bin/env python3
-import json, csv, os, re, time, random, logging, tempfile, zipfile, shutil, datetime
+import json, csv, os, re, time, random, logging, tempfile, zipfile, shutil, datetime, argparse
 from urllib.request import Request
 import urllib.parse
 import lxml.html
@@ -11,10 +11,29 @@ from structures import Link
 from pgi_downloader import PGIDownloader
 import requests
 import logging
+from enum import Enum
+from typing import Optional
 
+
+class LocusIcons(Enum):
+    BLUE_RING = "#z-ico08.png"
+    GREEN_RING = "#z-ico13.png"
+    YELLOW_RING = "#z-ico18.png"
+    RED_RING = "#z-ico03.png"
+
+
+# class DataRecord:
 
 class PGIRecord:
     """Encapsulate Cave Information from PGI portal"""
+    KEYS = [
+        'Nazwa', 'Inne nazwy', 'Nr inwentarzowy', 'Region', 'Współrzędne WGS84', 'Gmina', 'Powiat', 'Województwo',
+        'Właściciel terenu', 'Podstawa ochrony', 'Ekspozycja otworu', 'Pozostałe otwory', 'Wysokość bezwzględna [m n.p.m.]',
+        'Wysokość względna [m]', 'Głębokość [m]', 'Przewyższenie [m]', 'Deniwelacja [m]', 'Długość [m] w tym szacowane [m]',
+        'Rozciągłość horyzontalna [m]', 'Położenie geograficzne', 'Opis drogi dojścia do otworu', 'Opis jaskini', 'Historia badań',
+        'Historia eksploracji', 'Historia dokumentacji', 'Zniszczona, niedostępna lub nieodnaleziona', 'Literatura', 'Materialy archiwalne',
+        'Autorzy opracowania', 'Redakcja', 'Stan na rok', 'Grafika, zdjęcia'
+    ]
 
     DATA_PATH = "data/{id}.html"
 
@@ -22,27 +41,38 @@ class PGIRecord:
     def name(self) -> str:
         return self.description['Nazwa']
 
-    @property
-    def length(self) -> int:
-        length = self.description.get('Długość [m] w tym szacowane [m]', '').replace(',', '.').strip().partition(' ')[0] or '0.0'
-        logging.info('len: %d', int(float(length)))
-        return int(float(length))
+    @staticmethod
+    def _parse_number(value: Optional[str]) -> Optional[int]:
+        if value is None or (value.strip() == ''):
+            return None
+
+        return int(float(value.replace(',', '.').strip().partition(' ')[0]))
 
     @property
-    def icon(self):
+    def length(self) -> Optional[int]:
+        return self._parse_number(self.description.get('Długość [m] w tym szacowane [m]'))
+
+    @property
+    def elevation(self) -> Optional[int]:
+        return self._parse_number(self.description.get('Wysokość bezwzględna [m n.p.m.]'))
+
+    @property
+    def icon(self) -> LocusIcons:
         length = self.length
 
-        if length < 10:
-            return "#z-ico08.png"
+        if length is None or length < 10:
+            return LocusIcons.BLUE_RING
         elif length < 100:
-            return "#z-ico13.png"
+            return LocusIcons.GREEN_RING
         elif length < 1000:
-            return "#z-ico18.png"
-        return "#z-ico03.png"
+            return LocusIcons.YELLOW_RING
+
+        return LocusIcons.RED_RING
 
     def __init__(self, id, description, *, attachments=None, links=None, coords=None):
         self.id = id
         self.description = description
+
         self.coords = coords or self.parse_wsg84(description.get('Współrzędne WGS84'))
         self.attachments = []
         self._preload_attachments(attachments or [])
@@ -65,7 +95,7 @@ class PGIRecord:
     def _preload_attachments(self, ids):
         for attachment_id in ids:
             logging.debug('Preloading %s', attachment_id)
-            path = f"./data/{attachment_id}.jpg"
+            path = f"./data/{self.id}/{attachment_id}.jpg"
 
             self.attachments.append(PGIDownloader.download(attachment_id, path))
 
@@ -94,8 +124,14 @@ class PGIRecord:
                 assert len(e.getchildren()) == 2
                 key, value = e.getchildren()
                 key = key.text_content()
-                value = value.text_content()
-                data[clear_text(key)] = clear_text(value)
+
+                paragraphs = value.xpath('.//p')
+                if paragraphs:
+                    value = '\n\n'.join([clear_text(e.text_content()) for e in paragraphs])
+                else:
+                    value = clear_text(value.text_content())
+
+                data[clear_text(key)] = value
 
             # Read attachments
             file.seek(0)
@@ -196,8 +232,10 @@ def render_placemark(record, external_data=True):
     for key, value in data.items():
         if value.strip() == '':
             value = '---'
+        value = value.replace("\n\n", '<br><br>')
 
         description.append(f"<b>{key.upper()}</b><p>{value}</p>")
+
     description = "\n".join(description)
 
     links_html = ''.join(map(lambda link: f"<li>{link.to_html()}</li>", record.links))
@@ -209,17 +247,22 @@ def render_placemark(record, external_data=True):
     else:
         extended_data = ''
 
+    coords = [record.coords[1], record.coords[0]]
+    if record.elevation is not None:
+        coords.append(record.elevation)
+    coords = ",".join(map(str, coords))
+
     html = f"""
         <Placemark>
-          <name>{record.name} [{record.length}m]</name>
+          <name>{record.name} [{record.length or '???'}m]</name>
           <description><![CDATA[
             <style type="text/css">p{{margin-top:0;text-align:justify}}</style>
             <small>{description}<b>LINKI</b><ul>{links_html}</ul></small><br/>
           ]]></description>
-          <styleUrl>{record.icon}</styleUrl>
+          <styleUrl>{record.icon.value}</styleUrl>
           {extended_data}
           <Point>
-            <coordinates>{record.coords[1]},{record.coords[0]}</coordinates>
+            <coordinates>{coords}</coordinates>
           </Point>
         </Placemark>
     """
@@ -238,7 +281,7 @@ def export_to_kml(path, data):
         	<atom:author><atom:name>Locus (Android)</atom:name></atom:author>
         """)
 
-        for key, values in tqdm(data.items()):
+        for key in tqdm(data.keys()):
             record = PGIRecord.load(key)
 
             if record.coords is None:
@@ -277,21 +320,34 @@ def generate_data_placeholders(data):
     print("}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--skip-cbdg', help='Skip checking for new data in CDBG', action='store_false', dest='check_cbdg')
+    parser.add_argument('--skip-validation', help='Skip external links validation', action='store_false', dest='validate')
+    parser.add_argument('-u', '--user-data', help='Extend points database with custom JSON file', action='append')
+
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
+    args = parse_args()
+
     logging.basicConfig(format='[%(asctime)-15s] [%(levelname)s] %(message)s')
     logging.getLogger().setLevel('INFO')
 
-    res = get(14.0, 49.0, 24.2, 55)
-    for key in tqdm(res):
-        assert key in DATA
-        for link in DATA[key]:
-            link.validate()
+    if args.check_cbdg:
+        res = get(14.0, 49.0, 24.2, 55)
+        # assert key in DATA
+        # TODO: actualize database
+
+    if args.validate:
+        for key in tqdm(DATA):
+            for link in DATA[key]:
+                link.validate()
 
     # generate_data_placeholders(res)
     output_file = "caves.%s.kmz" % datetime.datetime.today().strftime('%Y%m%d')
 
     logging.info('Output file: %s', output_file)
-    export_to_kmz(output_file, res)
-
-    # export_to_tsv('output.new.tsv', res)
-    # export_to_kml('output.new.kml', res)
+    export_to_kmz(output_file, DATA)
