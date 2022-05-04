@@ -21,13 +21,17 @@ class PGIDownloader:
     IMAGE_RENDER_URL = 'http://jaskiniepolski.pgi.gov.pl/Details/RenderImage'
 
     @classmethod
-    def _get_image_info(cls, id):
-        r = requests.post(cls.IMAGE_INFO_URL, params=dict(id=id))
-        return r.json()
+    def _get_image_info(cls, id: int):
+        req = requests.post(cls.IMAGE_INFO_URL, params=dict(id=id))
+        return req.json()
 
     @classmethod
-    def download(cls, id, output, *, force=False):
+    def download(cls, id: int, output: str, *, force: bool = False) -> PGIImage:
         info = cls._get_image_info(id)
+        
+        dirname = os.path.dirname(output)
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
 
         if not os.path.isfile(output) or force:
             r = requests.get(cls.IMAGE_RENDER_URL, params=dict(id=id, zoom=0, ifGet='false', date=int(time.time())))
@@ -44,6 +48,5 @@ class PGIDownloader:
 
 
 if __name__ == '__main__':
-#
-    d = PGIDownloader()
-    d.download(1561)
+    out = PGIDownloader.download(1561, "image-1561.jpg")
+    print(out)

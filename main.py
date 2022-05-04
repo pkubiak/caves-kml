@@ -1,5 +1,5 @@
 #! /usr/bin/env python3
-import json, csv, os, re, time, random, logging, tempfile, zipfile, shutil, datetime, argparse
+import json, csv, os, re, time, random, logging, tempfile, zipfile, shutil, datetime, argparse, csv
 from urllib.request import Request
 import urllib.parse
 import lxml.html
@@ -12,7 +12,7 @@ from pgi_downloader import PGIDownloader
 import requests
 import logging
 from enum import Enum
-from typing import Optional
+from typing import Optional, Iterable
 
 
 class LocusIcons(Enum):
@@ -24,37 +24,70 @@ class LocusIcons(Enum):
 
 # class DataRecord:
 
+
 class PGIRecord:
     """Encapsulate Cave Information from PGI portal"""
+
     KEYS = [
-        'Nazwa', 'Inne nazwy', 'Nr inwentarzowy', 'Region', 'Współrzędne WGS84', 'Gmina', 'Powiat', 'Województwo',
-        'Właściciel terenu', 'Podstawa ochrony', 'Ekspozycja otworu', 'Pozostałe otwory', 'Wysokość bezwzględna [m n.p.m.]',
-        'Wysokość względna [m]', 'Głębokość [m]', 'Przewyższenie [m]', 'Deniwelacja [m]', 'Długość [m] w tym szacowane [m]',
-        'Rozciągłość horyzontalna [m]', 'Położenie geograficzne', 'Opis drogi dojścia do otworu', 'Opis jaskini', 'Historia badań',
-        'Historia eksploracji', 'Historia dokumentacji', 'Zniszczona, niedostępna lub nieodnaleziona', 'Literatura', 'Materialy archiwalne',
-        'Autorzy opracowania', 'Redakcja', 'Stan na rok', 'Grafika, zdjęcia'
+        "Nazwa",
+        "Inne nazwy",
+        "Nr inwentarzowy",
+        "Region",
+        "Współrzędne WGS84",
+        "Gmina",
+        "Powiat",
+        "Województwo",
+        "Właściciel terenu",
+        "Podstawa ochrony",
+        "Ekspozycja otworu",
+        "Pozostałe otwory",
+        "Wysokość bezwzględna [m n.p.m.]",
+        "Wysokość względna [m]",
+        "Głębokość [m]",
+        "Przewyższenie [m]",
+        "Deniwelacja [m]",
+        "Długość [m] w tym szacowane [m]",
+        "Rozciągłość horyzontalna [m]",
+        "Położenie geograficzne",
+        "Opis drogi dojścia do otworu",
+        "Opis jaskini",
+        "Historia badań",
+        "Historia eksploracji",
+        "Historia dokumentacji",
+        "Zniszczona, niedostępna lub nieodnaleziona",
+        "Literatura",
+        "Materialy archiwalne",
+        "Autorzy opracowania",
+        "Redakcja",
+        "Stan na rok",
+        "Grafika, zdjęcia",
+        "Obiekt w serwisie Geostanowiska",
     ]
 
     DATA_PATH = "data/{id}.html"
 
     @property
     def name(self) -> str:
-        return self.description['Nazwa']
+        return self.description["Nazwa"]
 
     @staticmethod
     def _parse_number(value: Optional[str]) -> Optional[int]:
-        if value is None or (value.strip() == ''):
+        if value is None or (value.strip() == ""):
             return None
 
-        return int(float(value.replace(',', '.').strip().partition(' ')[0]))
+        return int(float(value.replace(",", ".").strip().partition(" ")[0]))
 
     @property
     def length(self) -> Optional[int]:
-        return self._parse_number(self.description.get('Długość [m] w tym szacowane [m]'))
+        return self._parse_number(
+            self.description.get("Długość [m] w tym szacowane [m]")
+        )
 
     @property
     def elevation(self) -> Optional[int]:
-        return self._parse_number(self.description.get('Wysokość bezwzględna [m n.p.m.]'))
+        return self._parse_number(
+            self.description.get("Wysokość bezwzględna [m n.p.m.]")
+        )
 
     @property
     def icon(self) -> LocusIcons:
@@ -73,7 +106,7 @@ class PGIRecord:
         self.id = id
         self.description = description
 
-        self.coords = coords or self.parse_wsg84(description.get('Współrzędne WGS84'))
+        self.coords = coords or self.parse_wsg84(description.get("Współrzędne WGS84"))
         self.attachments = []
         self._preload_attachments(attachments or [])
 
@@ -82,11 +115,13 @@ class PGIRecord:
     @staticmethod
     def parse_wsg84(text):
         try:
-            lon, lat = re.findall('(\d+)°(\d+)′(\d+(?:\.\d+)?)″', text.replace(',', '.'))
+            lon, lat = re.findall(
+                "(\d+)°(\d+)′(\d+(?:\.\d+)?)″", text.replace(",", ".")
+            )
             assert (len(lat) == 3) and (len(lon) == 3)
 
-            lat = float(lat[0]) + (float(lat[1]) + float(lat[2])/60)/60
-            lon = float(lon[0]) + (float(lon[1]) + float(lon[2])/60)/60
+            lat = float(lat[0]) + (float(lat[1]) + float(lat[2]) / 60) / 60
+            lon = float(lon[0]) + (float(lon[1]) + float(lon[2]) / 60) / 60
 
             return (lat, lon)
         except ValueError:
@@ -94,7 +129,7 @@ class PGIRecord:
 
     def _preload_attachments(self, ids):
         for attachment_id in ids:
-            logging.debug('Preloading %s', attachment_id)
+            logging.debug("Preloading %s", attachment_id)
             path = f"./data/{self.id}/{attachment_id}.jpg"
 
             self.attachments.append(PGIDownloader.download(attachment_id, path))
@@ -104,8 +139,10 @@ class PGIRecord:
         path = cls.DATA_PATH.format(id=id)
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        with open(path, 'w') as output:
-            r = requests.get(f"http://jaskiniepolski.pgi.gov.pl/Details/Information/{id}")
+        with open(path, "w") as output:
+            r = requests.get(
+                f"http://jaskiniepolski.pgi.gov.pl/Details/Information/{id}"
+            )
             output.write(r.text)
 
     @classmethod
@@ -120,78 +157,95 @@ class PGIRecord:
         with open(data_path) as file:
             doc = lxml.html.parse(file)
             data = OrderedDict()
-            for e in doc.xpath('//tr'):
+            for e in doc.xpath("//tr"):
                 assert len(e.getchildren()) == 2
                 key, value = e.getchildren()
                 key = key.text_content()
 
-                paragraphs = value.xpath('.//p')
+                paragraphs = value.xpath(".//p")
                 if paragraphs:
-                    value = '\n\n'.join([clear_text(e.text_content()) for e in paragraphs])
+                    value = "\n\n".join(
+                        [clear_text(e.text_content()) for e in paragraphs]
+                    )
                 else:
                     value = clear_text(value.text_content())
-
-                data[clear_text(key)] = value
+                key = clear_text(key)
+                assert key in cls.KEYS, f"Unknown key (for {id}): '{key}'"
+    
+                data[key] = value
 
             # Read attachments
             file.seek(0)
             text = file.read()
 
             if id in PRELOAD_IMAGES:
-                attachments = list(map(int, re.findall('showImageInfo\((\d+)\)', text)))
-                logging.info('Preloading %d images for %s', len(attachments), data['Nazwa'])
+                attachments = list(map(int, re.findall("showImageInfo\((\d+)\)", text)))
+                logging.info(
+                    "Preloading %d images for %s", len(attachments), data["Nazwa"]
+                )
             else:
                 attachments = None
 
             # Get Links
-            links = [Link('Pokaż oryginał', f"http://jaskiniepolski.pgi.gov.pl/Details/Information/{id}")]
-            if 'geostanowiska.pgi.gov.pl' in text:
-                geostanowisko = re.search(r'https?://geostanowiska.pgi.gov.pl/[^"\']+', text)
+            links = [
+                Link(
+                    "Pokaż oryginał",
+                    f"http://jaskiniepolski.pgi.gov.pl/Details/Information/{id}",
+                )
+            ]
+            if "geostanowiska.pgi.gov.pl" in text:
+                geostanowisko = re.search(
+                    r'https?://geostanowiska.pgi.gov.pl/[^"\']+', text
+                )
                 assert geostanowisko
                 # print(geostanowisko, geostanowisko.group())
-                links.append(Link('Geostanowisko', geostanowisko.group()))
+                links.append(Link("Geostanowisko", geostanowisko.group()))
 
             for content in DATA.get(id, []):
                 if isinstance(content, Link):
                     links.append(content)
 
+        return PGIRecord(id=id, description=data, attachments=attachments, links=links)
 
-        return PGIRecord(
-            id=id,
-            description=data,
-            attachments=attachments,
-            links=links
-        )
 
+from typing import Set
+import csv
+
+def load_ids() -> Set[int]:
+    ids = set()
+    with open("database.tsv") as file:
+        tsv = csv.DictReader(file, delimiter="\t")
+        for row in tsv:
+            ids.add(int(row["ID"]))
+    return ids
 
 def query(x0, y0, x1, y1):
     print(f"query: {x0}, {y0}, {x1}, {y1}")
     params = {
-        'returnGeometry': 'false',
-        'where': '1=1',
-        'outSr': '4326',
-        'outFields': '*',
-        'geometry': f"{x0},{y0},{x1},{y1}",
-        'geometryType': 'esriGeometryEnvelope',
-
+        "returnGeometry": "false",
+        "where": "1=1",
+        "outSr": "4326",
+        "outFields": "*",
+        "geometry": f"{x0},{y0},{x1},{y1}",
+        "geometryType": "esriGeometryEnvelope",
         # geometry=24.0380859375%2C49.35375571830993
         # geometryType=esriGeometryPoint
         # spatialRel=esriSpatialRelIntersects
         # units=esriSRUnit_Meter
         # distance=62840.38716486637
-        'inSr': '4326',
-        'f': 'json',
+        "inSr": "4326",
+        "f": "json",
         # maxAllowableOffset=0.01
     }
 
     query_string = urllib.parse.urlencode(params)
-    url = f"http://cbdgmapa.pgi.gov.pl/arcgis/rest/services/jaskinie/MapServer//0/query?{query_string}"
+    url = f"https://cbdgmapa.pgi.gov.pl/arcgis/rest/services/jaskinie/MapServer//0/query?{query_string}"
 
     with urllib.request.urlopen(url) as response:
         data = response.read()
         j = json.loads(data)
-        f = j['features']
-        objs = {obj['attributes']['ID']: obj['attributes'] for obj in f}
+        f = j["features"]
+        objs = {obj["attributes"]["ID"]: obj["attributes"] for obj in f}
         if len(f) == 1000:
             raise OverflowError
         return objs
@@ -211,41 +265,48 @@ def get(x0, y0, x1, y1):
 
     return resp
 
+
 def export_to_tsv(path, data):
     values = list(data.values())
     fieldnames = list(values[0].keys())
 
-    with open(path, 'w') as output:
+    with open(path, "w") as output:
         writer = csv.DictWriter(output, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()
 
         for item in values:
             writer.writerow(item)
 
+
 def clear_text(text):
-    return re.sub('\s+', ' ', text).strip()
+    return re.sub("\s+", " ", text).strip()
 
 
 def render_placemark(record, external_data=True):
     data = record.description
     description = []
     for key, value in data.items():
-        if value.strip() == '':
-            value = '---'
-        value = value.replace("\n\n", '<br><br>')
+        if value.strip() == "":
+            value = "---"
+        value = value.replace("\n\n", "<br><br>")
 
         description.append(f"<b>{key.upper()}</b><p>{value}</p>")
 
     description = "\n".join(description)
 
-    links_html = ''.join(map(lambda link: f"<li>{link.to_html()}</li>", record.links))
+    links_html = "".join(map(lambda link: f"<li>{link.to_html()}</li>", record.links))
 
     # Generate
     if record.attachments and external_data:
-        attachments = "".join(map(lambda attachment: f"<lc:attachment>files/{attachment.id}.jpg</lc:attachment>", record.attachments))
+        attachments = "".join(
+            map(
+                lambda attachment: f"<lc:attachment>files/{attachment.id}.jpg</lc:attachment>",
+                record.attachments,
+            )
+        )
         extended_data = f'<ExtendedData xmlns:lc="http://www.locusmap.eu">{attachments}</ExtendedData>'
     else:
-        extended_data = ''
+        extended_data = ""
 
     coords = [record.coords[1], record.coords[0]]
     if record.elevation is not None:
@@ -267,49 +328,57 @@ def render_placemark(record, external_data=True):
         </Placemark>
     """
 
-    return ''.join([line.strip() for line in html.split("\n")]) + "\n"
+    return "".join([line.strip() for line in html.split("\n")]) + "\n"
 
 
-
-def export_to_kml(path, data):
+def export_to_kml(path, obj_ids: Iterable[int]) -> ...:
     attachments = []
-    with open(path, 'w') as output:
-        output.write("""<?xml version="1.0" encoding="utf-8"?>
+    with open(path, "w") as output:
+        output.write(
+            """<?xml version="1.0" encoding="utf-8"?>
             <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
             <Document>
         	<name>Jaskinie Polskie</name>
         	<atom:author><atom:name>Locus (Android)</atom:name></atom:author>
-        """)
+        """
+        )
 
-        for key in tqdm(data.keys()):
+        for key in tqdm(obj_ids):
             record = PGIRecord.load(key)
 
             if record.coords is None:
-                logging.warning('Skipping %s', key)
+                logging.warning("Skipping '%s' (%s)", record.name, key)
                 continue
 
             output.write(render_placemark(record))
             attachments.extend(record.attachments)
 
-        output.write("""
+        output.write(
+            """
             </Document>
             </kml>
-        """)
+        """
+        )
 
     return attachments
 
 
-def export_to_kmz(path, data):
+def export_to_kmz(path: str, obj_ids: Iterable[int]):
+    logging.info("Exporting to: %s", path)
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         print()
-        attachments = export_to_kml(os.path.join(tmp_dir, 'doc.kml'), data)
-        os.makedirs(os.path.join(tmp_dir, 'files'))
+        attachments = export_to_kml(os.path.join(tmp_dir, "doc.kml"), obj_ids)
+        os.makedirs(os.path.join(tmp_dir, "files"))
 
         for attachment in attachments:
-            os.symlink(attachment.path, os.path.join(tmp_dir, 'files', f"{attachment.id}.jpg"))
+            os.symlink(
+                attachment.path, os.path.join(tmp_dir, "files", f"{attachment.id}.jpg")
+            )
 
-        shutil.make_archive(path, 'zip', tmp_dir)
-        os.rename(path+'.zip', path)
+        shutil.make_archive(path, "zip", tmp_dir)
+        os.rename(path + ".zip", path)
+
 
 def generate_data_placeholders(data):
     print("DATA = {")
@@ -323,23 +392,66 @@ def generate_data_placeholders(data):
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--skip-cbdg', help='Skip checking for new data in CDBG', action='store_false', dest='check_cbdg')
-    parser.add_argument('--skip-validation', help='Skip external links validation', action='store_false', dest='validate')
-    parser.add_argument('-u', '--user-data', help='Extend points database with custom JSON file', action='append')
+    parser.add_argument(
+        "--check-cbdg",
+        help="Check for new data in CDBG",
+        action="store_true",
+        dest="check_cbdg",
+    )
+    parser.add_argument(
+        "--skip-validation",
+        help="Skip external links validation",
+        action="store_false",
+        dest="validate",
+    )
+    parser.add_argument(
+        "-u",
+        "--user-data",
+        help="Extend points database with custom JSON file",
+        action="append",
+    )
 
     return parser.parse_args()
 
 
-if __name__ == '__main__':
+def update_database():
+    obj_ids = load_ids()
+    res = get(14.0, 49.0, 24.2, 55)
+
+    with open("database.tsv", "w") as file:
+        tsv = csv.DictWriter(
+            file,
+            delimiter="\t",
+            fieldnames=[
+                "ID",
+                "NR_INWENT",
+                "NAZWA",
+                "REGION",
+                "GMINA",
+                "ROK_AKTUALIZACJI",
+            ],
+            extrasaction="ignore",
+        )
+        tsv.writeheader()
+        for row in sorted(res.values(), key=lambda item: item["ID"]):
+            if row["ID"] not in obj_ids:
+                logging.warning("ID not in the Database: %d: %s", row["ID"], row)
+            tsv.writerow(row)
+    
+
+if __name__ == "__main__":
     args = parse_args()
 
-    logging.basicConfig(format='[%(asctime)-15s] [%(levelname)s] %(message)s')
-    logging.getLogger().setLevel('INFO')
+    logging.basicConfig(format="[%(asctime)-15s] [%(levelname)s] %(message)s")
+    logging.getLogger().setLevel("INFO")
+
 
     if args.check_cbdg:
-        res = get(14.0, 49.0, 24.2, 55)
-        # assert key in DATA
-        # TODO: actualize database
+        update_database()
+
+    obj_ids = load_ids()
+
+    logging.info("Objects in database: %d", len(obj_ids))
 
     if args.validate:
         for key in tqdm(DATA):
@@ -347,7 +459,6 @@ if __name__ == '__main__':
                 link.validate()
 
     # generate_data_placeholders(res)
-    output_file = "caves.%s.kmz" % datetime.datetime.today().strftime('%Y%m%d')
+    output_file = "caves.%s.kmz" % datetime.datetime.today().strftime("%Y%m%d")
 
-    logging.info('Output file: %s', output_file)
-    export_to_kmz(output_file, DATA)
+    export_to_kmz(output_file, obj_ids)
