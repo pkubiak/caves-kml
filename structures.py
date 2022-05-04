@@ -39,7 +39,7 @@ class Wikipedia(Link):
 class Geocache(Link):
     """Link to geocache in geocaching.com portal"""
     def __init__(self, id):
-        super().__init__('Geocaching.com', f"https://coords.info/{id}")
+        super().__init__('Geocaching.com', f"https://coord.info/{id}")
 
 # class Attachment:
 #     pass
