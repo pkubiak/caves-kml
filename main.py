@@ -1,6 +1,5 @@
 #! /usr/bin/env python3
-import json, csv, os, re, time, random, logging, tempfile, zipfile, shutil, datetime, argparse, csv
-from urllib.request import Request
+import json, csv, os, re, time, logging, tempfile, shutil, datetime, argparse, requests
 import urllib.parse
 import lxml.html
 from collections import OrderedDict
@@ -8,21 +7,31 @@ from tqdm import tqdm
 
 from data import DATA, PRELOAD_IMAGES
 from structures import Link
-from pgi_downloader import PGIDownloader
-import requests
-import logging
+from pgi_downloader import PGIDownloader, PGIImage
 from enum import Enum
-from typing import Optional, Iterable
+from typing import Optional, Iterable, Set
 
+
+def parse_wsg84(text):
+    try:
+        lon, lat = re.findall(
+            "(\d+)°(\d+)′(\d+(?:\.\d+)?)″", text.replace(",", ".")
+        )
+        assert (len(lat) == 3) and (len(lon) == 3)
+
+        lat = float(lat[0]) + (float(lat[1]) + float(lat[2]) / 60) / 60
+        lon = float(lon[0]) + (float(lon[1]) + float(lon[2]) / 60) / 60
+
+        return (lat, lon)
+    except ValueError:
+        return None
+        
 
 class LocusIcons(Enum):
     BLUE_RING = "#z-ico08.png"
     GREEN_RING = "#z-ico13.png"
     YELLOW_RING = "#z-ico18.png"
     RED_RING = "#z-ico03.png"
-
-
-# class DataRecord:
 
 
 class PGIRecord:
@@ -64,6 +73,29 @@ class PGIRecord:
         "Obiekt w serwisie Geostanowiska",
     ]
 
+    # Keys that should not be exported
+    IGNORED_KEYS = [
+        "Współrzędne WGS84",
+        "Grafika, zdjęcia",
+        "Obiekt w serwisie Geostanowiska",
+    ]
+
+    # Keys that should be expanded by default
+    EXPANDED_KEYS = [
+        "Nazwa",
+        "Inne nazwy",
+        "Nr inwentarzowy",
+        "Region",
+        "Pozostałe otwory",
+        "Wysokość bezwzględna [m n.p.m.]",
+        "Wysokość względna [m]",
+        "Głębokość [m]",
+        "Przewyższenie [m]",
+        "Deniwelacja [m]",
+        "Długość [m] w tym szacowane [m]",
+        "Rozciągłość horyzontalna [m]",
+    ]
+
     DATA_PATH = "data/{id}.html"
 
     @property
@@ -102,37 +134,23 @@ class PGIRecord:
 
         return LocusIcons.RED_RING
 
-    def __init__(self, id, description, *, attachments=None, links=None, coords=None):
+    def __init__(self, id: str, description: str, *, images=None, links=None, coords=None):
         self.id = id
         self.description = description
 
-        self.coords = coords or self.parse_wsg84(description.get("Współrzędne WGS84"))
+        self.coords = coords or parse_wsg84(description.get("Współrzędne WGS84"))
+        self.images = images or []
         self.attachments = []
-        self._preload_attachments(attachments or [])
 
         self.links = links or []
 
-    @staticmethod
-    def parse_wsg84(text):
-        try:
-            lon, lat = re.findall(
-                "(\d+)°(\d+)′(\d+(?:\.\d+)?)″", text.replace(",", ".")
-            )
-            assert (len(lat) == 3) and (len(lon) == 3)
+    def preload_images(self) -> None:
+        self.attachments = []
+        for _, image_id in self.images:
+            logging.info("Preloading image: %s", image_id)
+            path = f"./data/{self.id}/{image_id}.jpg"
 
-            lat = float(lat[0]) + (float(lat[1]) + float(lat[2]) / 60) / 60
-            lon = float(lon[0]) + (float(lon[1]) + float(lon[2]) / 60) / 60
-
-            return (lat, lon)
-        except ValueError:
-            return None
-
-    def _preload_attachments(self, ids):
-        for attachment_id in ids:
-            logging.debug("Preloading %s", attachment_id)
-            path = f"./data/{self.id}/{attachment_id}.jpg"
-
-            self.attachments.append(PGIDownloader.download(attachment_id, path))
+            self.attachments.append(PGIDownloader.download(image_id, path))
 
     @classmethod
     def _preload_html(cls, id):
@@ -178,13 +196,11 @@ class PGIRecord:
             file.seek(0)
             text = file.read()
 
-            if id in PRELOAD_IMAGES:
-                attachments = list(map(int, re.findall("showImageInfo\((\d+)\)", text)))
-                logging.info(
-                    "Preloading %d images for %s", len(attachments), data["Nazwa"]
-                )
-            else:
-                attachments = None
+            # Build links to image preview
+            images = []
+            for image_id, name in re.findall('<a onclick="showImageInfo\((\d+)\)".*?/>(.*?)</a>', text, flags=re.DOTALL|re.MULTILINE):
+                images.append((name.strip(), image_id))
+                #f"http://jaskiniepolski.pgi.gov.pl/Details/RenderImage?id={image_id}&zoom=0&ifGet=false"))
 
             # Get Links
             links = [
@@ -205,11 +221,58 @@ class PGIRecord:
                 if isinstance(content, Link):
                     links.append(content)
 
-        return PGIRecord(id=id, description=data, attachments=attachments, links=links)
+        return PGIRecord(id=id, description=data, images=images, links=links)
 
+    def as_placemark(self, external_data: bool = True) -> str:
+        data = self.description
+        description = []
+        for key, value in data.items():
+            value = value.strip()
+            if not value or (key in PGIRecord.IGNORED_KEYS):
+                continue
+            value = value.replace("\n\n", "<br><br>")
 
-from typing import Set
-import csv
+            if key in PGIRecord.EXPANDED_KEYS:
+                description.append(f"<div><b>{key.upper()}</b><p>{value}</p></div>")
+            else:
+                description.append(f"<details><summary>{key.upper()}</summary><p>{value}</p></details>")
+
+        # Generate Images Links
+        attachments_links_html = map(lambda item: f'<li><a href="http://jaskiniepolski.pgi.gov.pl/Details/RenderImage?id={item[1]}&zoom=0&ifGet=false">{item[0]}</a></li>', self.images)
+        description.append(f'<b>GRAFIKA, ZDJĘCIA</b><ul>{"".join(attachments_links_html)}</ul>')
+
+        # Generate Links
+        links_html = "".join(map(lambda link: f"<li>{link.to_html()}</li>", self.links))
+        description.append(f"<b>LINKI</b><ul>{links_html}</ul>")
+
+        # Generate Attachments
+        if self.attachments and external_data:
+            attachments = map(lambda attachment: f"<lc:attachment>files/{attachment.id}.jpg</lc:attachment>", self.attachments)
+            extended_data = f'<ExtendedData xmlns:lc="http://www.locusmap.eu">{"".join(attachments)}</ExtendedData>'
+        else:
+            extended_data = ""
+
+        coords = [self.coords[1], self.coords[0]]
+        if self.elevation is not None:
+            coords.append(self.elevation)
+        coords = ",".join(map(str, coords))
+
+        html = f"""
+            <Placemark>
+            <name>{self.name} [{self.length or '???'}m]</name>
+            <description><![CDATA[
+                <style type="text/css">p,ul{{margin:0;text-align:justify}}ul{{padding-left:24px}}summary{{font-weight:bold}}details,div,ul{{margin-bottom: 10px}}</style>
+                <small>{"".join(description)}</small><br/>
+            ]]></description>
+            <styleUrl>{self.icon.value}</styleUrl>
+            {extended_data}
+            <Point>
+                <coordinates>{coords}</coordinates>
+            </Point>
+            </Placemark>
+        """
+
+        return "".join([line.strip() for line in html.split("\n")]) + "\n"
 
 def load_ids() -> Set[int]:
     ids = set()
@@ -282,55 +345,6 @@ def clear_text(text):
     return re.sub("\s+", " ", text).strip()
 
 
-def render_placemark(record, external_data=True):
-    data = record.description
-    description = []
-    for key, value in data.items():
-        if value.strip() == "":
-            value = "---"
-        value = value.replace("\n\n", "<br><br>")
-
-        description.append(f"<b>{key.upper()}</b><p>{value}</p>")
-
-    description = "\n".join(description)
-
-    links_html = "".join(map(lambda link: f"<li>{link.to_html()}</li>", record.links))
-
-    # Generate
-    if record.attachments and external_data:
-        attachments = "".join(
-            map(
-                lambda attachment: f"<lc:attachment>files/{attachment.id}.jpg</lc:attachment>",
-                record.attachments,
-            )
-        )
-        extended_data = f'<ExtendedData xmlns:lc="http://www.locusmap.eu">{attachments}</ExtendedData>'
-    else:
-        extended_data = ""
-
-    coords = [record.coords[1], record.coords[0]]
-    if record.elevation is not None:
-        coords.append(record.elevation)
-    coords = ",".join(map(str, coords))
-
-    html = f"""
-        <Placemark>
-          <name>{record.name} [{record.length or '???'}m]</name>
-          <description><![CDATA[
-            <style type="text/css">p{{margin-top:0;text-align:justify}}</style>
-            <small>{description}<b>LINKI</b><ul>{links_html}</ul></small><br/>
-          ]]></description>
-          <styleUrl>{record.icon.value}</styleUrl>
-          {extended_data}
-          <Point>
-            <coordinates>{coords}</coordinates>
-          </Point>
-        </Placemark>
-    """
-
-    return "".join([line.strip() for line in html.split("\n")]) + "\n"
-
-
 def export_to_kml(path, obj_ids: Iterable[int]) -> ...:
     attachments = []
     with open(path, "w") as output:
@@ -340,8 +354,7 @@ def export_to_kml(path, obj_ids: Iterable[int]) -> ...:
             <Document>
         	<name>Jaskinie Polskie</name>
         	<atom:author><atom:name>Locus (Android)</atom:name></atom:author>
-        """
-        )
+        """)
 
         for key in tqdm(obj_ids):
             record = PGIRecord.load(key)
@@ -350,15 +363,18 @@ def export_to_kml(path, obj_ids: Iterable[int]) -> ...:
                 logging.warning("Skipping '%s' (%s)", record.name, key)
                 continue
 
-            output.write(render_placemark(record))
+            if key in PRELOAD_IMAGES:
+                record.preload_images()
+
+            output.write(record.as_placemark())
+
             attachments.extend(record.attachments)
 
         output.write(
             """
             </Document>
             </kml>
-        """
-        )
+        """)
 
     return attachments
 
@@ -367,26 +383,16 @@ def export_to_kmz(path: str, obj_ids: Iterable[int]):
     logging.info("Exporting to: %s", path)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        print()
         attachments = export_to_kml(os.path.join(tmp_dir, "doc.kml"), obj_ids)
         os.makedirs(os.path.join(tmp_dir, "files"))
 
         for attachment in attachments:
             os.symlink(
-                attachment.path, os.path.join(tmp_dir, "files", f"{attachment.id}.jpg")
+                attachment.path, os.path.join(tmp_dir, "files", f"{attachment.id}.jpg")  # TODO: fix attachment names
             )
 
         shutil.make_archive(path, "zip", tmp_dir)
         os.rename(path + ".zip", path)
-
-
-def generate_data_placeholders(data):
-    print("DATA = {")
-    for key in sorted(data.keys()):
-        print(f"\t# {data[key]['NAZWA']} / {data[key].get('NR_INWENT')}")
-        print(f"\t{key}: []")
-        print()
-    print("}")
 
 
 def parse_args():
@@ -403,12 +409,6 @@ def parse_args():
         help="Skip external links validation",
         action="store_false",
         dest="validate",
-    )
-    parser.add_argument(
-        "-u",
-        "--user-data",
-        help="Extend points database with custom JSON file",
-        action="append",
     )
 
     return parser.parse_args()
@@ -458,7 +458,6 @@ if __name__ == "__main__":
             for link in DATA[key]:
                 link.validate()
 
-    # generate_data_placeholders(res)
     output_file = "caves.%s.kmz" % datetime.datetime.today().strftime("%Y%m%d")
 
     export_to_kmz(output_file, obj_ids)
