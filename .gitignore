@@ -1,5 +1,4 @@
 data
 *.kml
-*.tsv
 *.kmz
 __pycache__
